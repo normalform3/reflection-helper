@@ -42,6 +42,9 @@ class FakeElement {
     this.value = attrs.value ?? "";
     this.textContent = "";
     this.type = attrs.type ?? "";
+    this.id = attrs.id ?? "";
+    this.checked = attrs.checked ?? false;
+    this.parent = null;
     this._innerHTML = "";
   }
 
@@ -52,17 +55,48 @@ class FakeElement {
     for (const match of value.matchAll(/<textarea([^>]*)>([\s\S]*?)<\/textarea>|<textarea([^>]*)><\/textarea>/g)) {
       const attrs = match[1] ?? match[3] ?? "";
       const index = attrs.match(/data-prompt-index="(\d+)"/)?.[1];
-      this.children.push(
-        new FakeElement("textarea", {
-          dataset: index === undefined ? {} : { promptIndex: index },
-          value: match[2] ?? "",
-        }),
-      );
+      const textarea = new FakeElement("textarea", {
+        dataset: index === undefined ? {} : { promptIndex: index },
+        value: match[2] ?? "",
+      });
+      textarea.parent = this;
+      this.children.push(textarea);
     }
 
-    if (value.includes("<button")) this.children.push(new FakeElement("button"));
-    if (value.includes("<input")) this.children.push(new FakeElement("input"));
-    if (value.includes("<select")) this.children.push(new FakeElement("select"));
+    if (value.includes('class="line-action-list"')) {
+      const lineActions = new FakeElement("div");
+      lineActions.className = "line-action-list";
+      lineActions.parent = this;
+      this.children.push(lineActions);
+    }
+
+    for (const match of value.matchAll(/<button([^>]*)>/g)) {
+      const attrs = match[1] ?? "";
+      const button = new FakeElement("button", {
+        dataset: {
+          ...(attrs.match(/data-line-index="(\d+)"/)?.[1] === undefined ? {} : { lineIndex: attrs.match(/data-line-index="(\d+)"/)?.[1] }),
+          ...(attrs.match(/data-action="([^"]+)"/)?.[1] === undefined ? {} : { action: attrs.match(/data-action="([^"]+)"/)?.[1] }),
+        },
+      });
+      button.className = attrs.match(/class="([^"]+)"/)?.[1] ?? "";
+      button.parent = this;
+      this.children.push(button);
+    }
+
+    for (const match of value.matchAll(/<input([^>]*)>/g)) {
+      const attrs = match[1] ?? "";
+      const input = new FakeElement("input");
+      input.className = attrs.match(/class="([^"]+)"/)?.[1] ?? "";
+      input.checked = attrs.includes("checked");
+      input.parent = this;
+      this.children.push(input);
+    }
+
+    if (value.includes("<select")) {
+      const select = new FakeElement("select");
+      select.parent = this;
+      this.children.push(select);
+    }
   }
 
   get innerHTML() {
@@ -70,6 +104,7 @@ class FakeElement {
   }
 
   appendChild(child) {
+    child.parent = this;
     this.children.push(child);
     return child;
   }
@@ -81,6 +116,8 @@ class FakeElement {
   querySelectorAll(selector) {
     const matches = [];
     const visit = (node) => {
+      if (selector.startsWith(".") && node.className.split(/\s+/).includes(selector.slice(1))) matches.push(node);
+      if (selector.startsWith("[data-action='") && node.dataset.action === selector.match(/\[data-action='([^']+)'\]/)?.[1]) matches.push(node);
       if (selector === "textarea" && node.tagName === "textarea") matches.push(node);
       if (selector === "button" && node.tagName === "button") matches.push(node);
       if (selector === "input" && node.tagName === "input") matches.push(node);
@@ -95,6 +132,16 @@ class FakeElement {
 
   addEventListener(name, handler) {
     this.listeners[name] = handler;
+  }
+
+  closest(selector) {
+    let node = this;
+    while (node) {
+      if (selector.startsWith(".") && node.className.split(/\s+/).includes(selector.slice(1))) return node;
+      if (selector === "button[data-line-index]" && node.tagName === "button" && node.dataset.lineIndex !== undefined) return node;
+      node = node.parent;
+    }
+    return null;
   }
 
   setAttribute(name, value) {
@@ -113,11 +160,8 @@ function createDom() {
   [
     "todayLabel",
     "appShell",
-    "sidebarToggle",
     "entryHeading",
     "entryDate",
-    "energyLevel",
-    "energyOutput",
     "entryForm",
     "freeNote",
     "saveEntryButton",
@@ -126,6 +170,10 @@ function createDom() {
     "contextPanel",
     "contextToggleButton",
     "closeContextButton",
+    "settingsDrawer",
+    "settingsToggleButton",
+    "closeSettingsButton",
+    "drawerBackdrop",
     "dayEntries",
     "selectedDayLabel",
     "jumpTodayButton",
@@ -133,8 +181,9 @@ function createDom() {
     "calendarGrid",
     "prevMonthButton",
     "nextMonthButton",
-    "streakCount",
     "nextReminder",
+    "iterationList",
+    "iterationCount",
     "reviewRange",
     "searchInput",
     "metrics",
@@ -152,15 +201,18 @@ function createDom() {
   ].forEach((id) => make(id));
 
   ids.get("entryDate").value = "2026-06-17";
-  ids.get("energyLevel").value = "6";
   ids.get("reviewRange").value = "30";
   ids.get("searchInput").value = "";
   ids.get("freeNote").tagName = "textarea";
 
-  const navItems = ["write", "review", "templates", "settings"].map((view) => new FakeElement("button", { dataset: { view } }));
   const segments = ["daily", "weekly", "monthly"].map((type) => new FakeElement("button", { dataset: { type } }));
   const templateTabs = ["daily", "weekly", "monthly"].map((template) => new FakeElement("button", { dataset: { template } }));
-  const views = ["writeView", "reviewView", "templatesView", "settingsView"].map(() => new FakeElement("section"));
+  const settingsTabs = ["review", "templates", "reminders", "data"].map((section) => new FakeElement("button", { dataset: { settingsSection: section } }));
+  const settingsSections = ["reviewSection", "templatesSection", "remindersSection", "dataSection"].map((id) => {
+    const element = new FakeElement("section");
+    element.id = id;
+    return element;
+  });
 
   return {
     querySelector(selector) {
@@ -168,10 +220,10 @@ function createDom() {
       return ids.get(selector.slice(1));
     },
     querySelectorAll(selector) {
-      if (selector === ".nav-item") return navItems;
       if (selector === ".segment") return segments;
       if (selector === ".template-tab") return templateTabs;
-      if (selector === ".view") return views;
+      if (selector === ".settings-tab") return settingsTabs;
+      if (selector === ".settings-section") return settingsSections;
       return [];
     },
     createElement(tagName) {
@@ -204,6 +256,7 @@ const context = {
     confirm: () => true,
     clearTimeout: () => {},
     setTimeout: () => 0,
+    prompt: (_message, value) => `${value} rewritten`,
     webkit: undefined,
   },
 };
@@ -212,31 +265,56 @@ context.window.window = context.window;
 vm.createContext(context);
 vm.runInContext(fs.readFileSync("app.js", "utf8"), context);
 
-context.toggleSidebar();
-assert.equal(fakeDocument.ids.get("appShell").classList.contains("is-sidebar-collapsed"), true);
-context.toggleSidebar();
-assert.equal(fakeDocument.ids.get("appShell").classList.contains("is-sidebar-collapsed"), false);
 context.setContextPanelOpen(true);
 assert.equal(fakeDocument.ids.get("contextPanel").classList.contains("is-open"), true);
 context.setContextPanelOpen(false);
 assert.equal(fakeDocument.ids.get("contextPanel").classList.contains("is-open"), false);
+context.setSettingsDrawerOpen(true);
+assert.equal(fakeDocument.ids.get("settingsDrawer").classList.contains("is-open"), true);
+context.setSettingsSection("templates");
+context.setSettingsDrawerOpen(false);
+assert.equal(fakeDocument.ids.get("settingsDrawer").classList.contains("is-open"), false);
 
 context.selectDate("2026-06-15");
 for (const type of ["daily", "weekly", "monthly"]) {
   context.setEntryType(type);
   const textareas = fakeDocument.ids.get("entryForm").querySelectorAll("textarea");
   textareas.forEach((textarea, index) => {
-    textarea.value = `${type} answer ${index}`;
+    textarea.value = index === 0 ? `${type} answer ${index}\n${type} next ${index}` : `${type} answer ${index}`;
   });
   fakeDocument.ids.get("freeNote").value = `${type} free note`;
   context.saveCurrentEntry();
 }
 
 let saved = JSON.parse(storage.get("reflection-helper-state-v1"));
+assert.deepEqual(saved.iterationItems, []);
 assert.deepEqual(
   saved.entries.filter((entry) => entry.date === "2026-06-15").map((entry) => entry.type).sort(),
   ["daily", "monthly", "weekly"],
 );
+assert.equal(saved.entries.find((entry) => entry.id === "daily-2026-06-15").answers[0], "daily answer 0\ndaily next 0");
+
+context.setEntryType("daily");
+context.createIterationFromLine(0, "daily next 0");
+context.createIterationFromLine(0, "daily next 0");
+saved = JSON.parse(storage.get("reflection-helper-state-v1"));
+assert.equal(saved.iterationItems.length, 1);
+assert.equal(saved.iterationItems[0].text, "daily next 0");
+assert.equal(saved.iterationItems[0].sourceEntryId, "daily-2026-06-15");
+assert.equal(saved.iterationItems[0].kind, "keep");
+assert.equal(saved.iterationItems[0].status, "active");
+assert.equal(fakeDocument.ids.get("iterationCount").textContent, "1");
+
+context.rewriteIterationItem(saved.iterationItems[0].id, "明天尝试早 10 分钟开始");
+saved = JSON.parse(storage.get("reflection-helper-state-v1"));
+assert.equal(saved.iterationItems[0].text, "明天尝试早 10 分钟开始");
+assert.equal(saved.iterationItems[0].kind, "try");
+
+context.archiveIterationItem(saved.iterationItems[0].id);
+saved = JSON.parse(storage.get("reflection-helper-state-v1"));
+assert.equal(saved.iterationItems[0].status, "archived");
+assert.ok(saved.iterationItems[0].archivedAt);
+assert.equal(fakeDocument.ids.get("iterationCount").textContent, "0");
 
 context.renderCalendar();
 const day15 = fakeDocument.ids
@@ -259,3 +337,55 @@ assert.deepEqual(
 );
 
 console.log("app smoke test passed");
+
+const legacyStorage = new Map([
+  [
+    "reflection-helper-state-v1",
+    JSON.stringify({
+      entries: [],
+      templates: {},
+      reminders: {},
+      todos: [
+        {
+          id: "todo-open",
+          text: "legacy open",
+          done: false,
+          sourceEntryId: "daily-2026-06-10",
+          sourceType: "daily",
+          sourceDate: "2026-06-10",
+          promptTitle: "明天只改一个动作，会改什么？",
+          createdAt: "2026-06-10T12:00:00.000Z",
+        },
+        {
+          id: "todo-done",
+          text: "legacy done",
+          done: true,
+          sourceEntryId: "daily-2026-06-11",
+          sourceType: "daily",
+          sourceDate: "2026-06-11",
+          promptTitle: "明天只改一个动作，会改什么？",
+          createdAt: "2026-06-11T12:00:00.000Z",
+        },
+      ],
+    }),
+  ],
+]);
+const legacyDocument = createDom();
+const legacyContext = {
+  ...context,
+  document: legacyDocument,
+  localStorage: {
+    getItem: (key) => legacyStorage.get(key) ?? null,
+    setItem: (key, value) => legacyStorage.set(key, value),
+  },
+};
+legacyContext.window = { ...context.window };
+legacyContext.window.window = legacyContext.window;
+vm.createContext(legacyContext);
+vm.runInContext(fs.readFileSync("app.js", "utf8"), legacyContext);
+legacyContext.persist();
+const migrated = JSON.parse(legacyStorage.get("reflection-helper-state-v1")).iterationItems;
+assert.equal(migrated.length, 1);
+assert.equal(migrated[0].text, "legacy open");
+assert.equal(migrated[0].kind, "try");
+assert.equal(migrated[0].status, "active");

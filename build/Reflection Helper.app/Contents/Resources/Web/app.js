@@ -8,6 +8,20 @@ const typeLabels = {
 
 const typeOrder = ["daily", "weekly", "monthly"];
 
+const iterationKindLabels = {
+  keep: "继续",
+  adjust: "调整",
+  try: "尝试",
+};
+
+const iterationKindDescriptions = {
+  keep: "值得保留的行为",
+  adjust: "需要改变的模式",
+  try: "下一周期的小实验",
+};
+
+const iterationKindOrder = ["keep", "adjust", "try"];
+
 const defaultTemplates = {
   daily: [
     { title: "今天最值得保留的行为是什么？", hint: "具体到场景、动作和触发条件。" },
@@ -32,8 +46,8 @@ const defaultReminders = {
   monthly: { enabled: false, time: "20:00", day: "last" },
 };
 
+const emptyIterationMessage = "把需要反复提醒自己的改变贴到这里。";
 const state = loadState();
-let activeView = "write";
 let activeType = "daily";
 let activeTemplateType = "daily";
 let selectedDate = toDateInputValue(new Date());
@@ -44,15 +58,10 @@ let pendingDeleteTimer = null;
 
 const dom = {
   appShell: document.querySelector("#appShell"),
-  sidebarToggle: document.querySelector("#sidebarToggle"),
   todayLabel: document.querySelector("#todayLabel"),
   entryHeading: document.querySelector("#entryHeading"),
-  navItems: document.querySelectorAll(".nav-item"),
-  views: document.querySelectorAll(".view"),
   typeSegments: document.querySelectorAll(".segment"),
   entryDate: document.querySelector("#entryDate"),
-  energyLevel: document.querySelector("#energyLevel"),
-  energyOutput: document.querySelector("#energyOutput"),
   entryForm: document.querySelector("#entryForm"),
   freeNote: document.querySelector("#freeNote"),
   saveEntryButton: document.querySelector("#saveEntryButton"),
@@ -61,6 +70,12 @@ const dom = {
   contextPanel: document.querySelector("#contextPanel"),
   contextToggleButton: document.querySelector("#contextToggleButton"),
   closeContextButton: document.querySelector("#closeContextButton"),
+  settingsDrawer: document.querySelector("#settingsDrawer"),
+  settingsToggleButton: document.querySelector("#settingsToggleButton"),
+  closeSettingsButton: document.querySelector("#closeSettingsButton"),
+  settingsTabs: document.querySelectorAll(".settings-tab"),
+  settingsSections: document.querySelectorAll(".settings-section"),
+  drawerBackdrop: document.querySelector("#drawerBackdrop"),
   dayEntries: document.querySelector("#dayEntries"),
   selectedDayLabel: document.querySelector("#selectedDayLabel"),
   jumpTodayButton: document.querySelector("#jumpTodayButton"),
@@ -68,8 +83,9 @@ const dom = {
   calendarGrid: document.querySelector("#calendarGrid"),
   prevMonthButton: document.querySelector("#prevMonthButton"),
   nextMonthButton: document.querySelector("#nextMonthButton"),
-  streakCount: document.querySelector("#streakCount"),
   nextReminder: document.querySelector("#nextReminder"),
+  iterationList: document.querySelector("#iterationList"),
+  iterationCount: document.querySelector("#iterationCount"),
   reviewRange: document.querySelector("#reviewRange"),
   searchInput: document.querySelector("#searchInput"),
   metrics: document.querySelector("#metrics"),
@@ -98,23 +114,18 @@ function init() {
 }
 
 function bindEvents() {
-  dom.sidebarToggle.addEventListener("click", toggleSidebar);
-  dom.navItems.forEach((button) => {
-    button.addEventListener("click", () => setView(button.dataset.view));
-  });
-
   dom.typeSegments.forEach((button) => {
     button.addEventListener("click", () => setEntryType(button.dataset.type));
   });
 
   dom.entryDate.addEventListener("change", () => selectDate(dom.entryDate.value));
-  dom.energyLevel.addEventListener("input", () => {
-    dom.energyOutput.textContent = dom.energyLevel.value;
-  });
   dom.saveEntryButton.addEventListener("click", saveCurrentEntry);
   dom.deleteEntryButton.addEventListener("click", deleteCurrentEntry);
   dom.contextToggleButton.addEventListener("click", () => setContextPanelOpen(!dom.contextPanel.classList.contains("is-open")));
   dom.closeContextButton.addEventListener("click", () => setContextPanelOpen(false));
+  dom.settingsToggleButton.addEventListener("click", () => setSettingsDrawerOpen(!dom.settingsDrawer.classList.contains("is-open")));
+  dom.closeSettingsButton.addEventListener("click", () => setSettingsDrawerOpen(false));
+  dom.drawerBackdrop.addEventListener("click", closeDrawers);
   dom.newEntryButton.addEventListener("click", () => {
     selectDate(toDateInputValue(new Date()), { keepType: true });
     clearFormFields();
@@ -125,6 +136,10 @@ function bindEvents() {
   dom.jumpTodayButton.addEventListener("click", () => selectDate(toDateInputValue(new Date()), { preferExisting: true }));
   dom.reviewRange.addEventListener("change", renderReview);
   dom.searchInput.addEventListener("input", renderReview);
+
+  dom.settingsTabs.forEach((button) => {
+    button.addEventListener("click", () => setSettingsSection(button.dataset.settingsSection));
+  });
 
   dom.templateTabs.forEach((button) => {
     button.addEventListener("click", () => {
@@ -156,27 +171,48 @@ function renderAll() {
   renderReview();
   renderTemplates();
   renderReminders();
+  renderIterationPanel();
   renderStats();
 }
 
-function setView(view) {
-  activeView = view;
-  dom.navItems.forEach((item) => item.classList.toggle("is-active", item.dataset.view === view));
-  dom.views.forEach((item) => item.classList.toggle("is-visible", item.id === `${view}View`));
-  if (view === "review") renderReview();
-  setContextPanelOpen(false);
-}
-
-function toggleSidebar() {
-  const collapsed = dom.appShell.classList.toggle("is-sidebar-collapsed");
-  dom.sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
-  dom.sidebarToggle.setAttribute("aria-label", collapsed ? "展开侧边栏" : "收起侧边栏");
-}
-
 function setContextPanelOpen(open) {
+  if (open) setSettingsDrawerOpen(false, { skipBackdrop: true });
   dom.contextPanel.classList.toggle("is-open", open);
   dom.contextPanel.setAttribute("aria-hidden", String(!open));
   dom.contextToggleButton.setAttribute("aria-expanded", String(open));
+  updateBackdrop();
+}
+
+function setSettingsDrawerOpen(open, options = {}) {
+  if (open) {
+    setContextPanelOpen(false);
+    renderReview();
+  }
+  dom.settingsDrawer.classList.toggle("is-open", open);
+  dom.settingsDrawer.setAttribute("aria-hidden", String(!open));
+  dom.settingsToggleButton.setAttribute("aria-expanded", String(open));
+  if (!options.skipBackdrop) updateBackdrop();
+}
+
+function setSettingsSection(section) {
+  dom.settingsTabs.forEach((tab) => {
+    tab.classList.toggle("is-active", tab.dataset.settingsSection === section);
+  });
+  dom.settingsSections.forEach((item) => {
+    item.classList.toggle("is-visible", item.id === `${section}Section`);
+  });
+  if (section === "review") renderReview();
+}
+
+function closeDrawers() {
+  setContextPanelOpen(false);
+  setSettingsDrawerOpen(false);
+}
+
+function updateBackdrop() {
+  const open = dom.contextPanel.classList.contains("is-open") || dom.settingsDrawer.classList.contains("is-open");
+  dom.drawerBackdrop.hidden = !open;
+  dom.drawerBackdrop.classList.toggle("is-visible", open);
 }
 
 function setEntryType(type) {
@@ -215,16 +251,37 @@ function moveCalendar(delta) {
 function renderEntryForm() {
   const template = state.templates[activeType] ?? defaultTemplates[activeType];
   dom.entryForm.innerHTML = "";
+  dom.entryForm.classList.toggle("is-scrollable", template.length > 2);
 
   template.forEach((prompt, index) => {
     const field = document.createElement("section");
     field.className = "prompt-card";
     field.innerHTML = `
-      <label>
-        <strong>${escapeHtml(prompt.title)}</strong>
-        <textarea data-prompt-index="${index}" rows="4" placeholder="${escapeHtml(prompt.hint)}"></textarea>
-      </label>
+      <div class="prompt-top">
+        <span class="prompt-number">${String(index + 1).padStart(2, "0")}</span>
+        <div>
+          <strong>${escapeHtml(prompt.title)}</strong>
+          <small>${escapeHtml(prompt.hint)}</small>
+        </div>
+      </div>
+      <div class="answer-shell">
+        <div class="line-action-list"></div>
+        <textarea data-prompt-index="${index}" rows="10" placeholder="${escapeHtml(prompt.hint)}"></textarea>
+      </div>
     `;
+
+    const textarea = field.querySelector("textarea");
+    const lineActions = field.querySelector(".line-action-list");
+    textarea.addEventListener("input", () => renderAnswerLines(textarea, lineActions));
+    lineActions.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-line-index]");
+      if (!button) return;
+      const line = getAnswerLines(textarea.value)[Number(button.dataset.lineIndex)]?.trim();
+      if (!line) return;
+      createIterationFromLine(index, line);
+    });
+    renderAnswerLines(textarea, lineActions);
+
     dom.entryForm.appendChild(field);
   });
 }
@@ -234,10 +291,9 @@ function loadEntryIntoForm() {
   const answers = entry?.answers ?? [];
   dom.entryForm.querySelectorAll("textarea").forEach((textarea) => {
     textarea.value = answers[Number(textarea.dataset.promptIndex)] ?? "";
+    renderAnswerLines(textarea, textarea.closest(".prompt-card")?.querySelector(".line-action-list"));
   });
   dom.freeNote.value = entry?.freeNote ?? "";
-  dom.energyLevel.value = entry?.energy ?? 6;
-  dom.energyOutput.textContent = String(entry?.energy ?? 6);
   dom.deleteEntryButton.disabled = !entry;
   resetDeleteConfirmation();
   updateEntryHeading();
@@ -246,10 +302,9 @@ function loadEntryIntoForm() {
 function clearFormFields() {
   dom.entryForm.querySelectorAll("textarea").forEach((textarea) => {
     textarea.value = "";
+    renderAnswerLines(textarea, textarea.closest(".prompt-card")?.querySelector(".line-action-list"));
   });
   dom.freeNote.value = "";
-  dom.energyLevel.value = 6;
-  dom.energyOutput.textContent = "6";
   dom.deleteEntryButton.disabled = true;
   resetDeleteConfirmation();
 }
@@ -264,7 +319,6 @@ function saveCurrentEntry() {
     id: `${activeType}-${selectedDate}`,
     type: activeType,
     date: selectedDate,
-    energy: Number(dom.energyLevel.value),
     answers,
     freeNote: dom.freeNote.value.trim(),
     updatedAt: new Date().toISOString(),
@@ -370,7 +424,7 @@ function renderSelectedDayEntries() {
       <button type="button">
         <strong>
           <span class="type-pill ${entry.type}">${typeLabels[entry.type]}</span>
-          <span>${entry.energy}/10</span>
+          <span>${formatDate(entry.date)}</span>
         </strong>
         <p>${escapeHtml(getEntryPreview(entry))}</p>
       </button>
@@ -379,7 +433,7 @@ function renderSelectedDayEntries() {
     card.querySelector("button").addEventListener("click", () => {
       activeType = entry.type;
       setEntryType(entry.type);
-      setView("write");
+      setContextPanelOpen(false);
     });
     dom.dayEntries.appendChild(card);
   });
@@ -393,18 +447,18 @@ function renderReview() {
 }
 
 function renderMetrics(entries) {
-  const averageEnergy = entries.length
-    ? (entries.reduce((sum, entry) => sum + entry.energy, 0) / entries.length).toFixed(1)
-    : "-";
   const totalWords = entries.reduce((sum, entry) => sum + getEntryText(entry).length, 0);
+  const activeDays = new Set(entries.map((entry) => entry.date)).size;
+  const latest = entries[0]?.date ? formatDate(entries[0].date) : "-";
 
   dom.metrics.innerHTML = [
     ["记录数", entries.length],
-    ["平均能量", averageEnergy],
+    ["记录天数", activeDays],
     ["日报天数", entries.filter((entry) => entry.type === "daily").length],
     ["文字量", totalWords],
-    ["复盘数", entries.filter((entry) => entry.type !== "daily").length],
+    ["周月复盘", entries.filter((entry) => entry.type !== "daily").length],
     ["连续天数", calculateStreak()],
+    ["最近记录", latest],
   ]
     .map(
       ([label, value]) => `
@@ -425,23 +479,19 @@ function renderSignals(entries) {
     return;
   }
 
-  const lowEnergy = entries.filter((entry) => entry.energy <= 4);
-  const highEnergy = entries.filter((entry) => entry.energy >= 8);
   const repeatedWords = getRepeatedWords(entries);
   const recent = entries[0];
+  const weeklyCount = entries.filter((entry) => entry.type === "weekly").length;
+  const monthlyCount = entries.filter((entry) => entry.type === "monthly").length;
 
   const signals = [
     {
-      title: "高能量样本",
-      body: highEnergy.length
-        ? `${highEnergy.length} 条记录能量达到 8 分以上。优先复盘这些日子的环境和行为。`
-        : "暂时没有 8 分以上的记录，先关注能量被消耗的位置。",
+      title: "记录节奏",
+      body: `${entries.length} 条记录分布在 ${new Set(entries.map((entry) => entry.date)).size} 天里。先看频率，再看内容质量。`,
     },
     {
-      title: "低能量样本",
-      body: lowEnergy.length
-        ? `${lowEnergy.length} 条记录能量不高。可以找出共同触发条件。`
-        : "低能量记录很少，当前节奏看起来相对稳定。",
+      title: "复盘层级",
+      body: weeklyCount || monthlyCount ? `已有 ${weeklyCount} 条周报、${monthlyCount} 条月报，可用来校准日常记录。` : "还没有周报或月报，积累几天后可以做一次更高层级的整理。",
     },
     {
       title: "反复出现的词",
@@ -463,18 +513,43 @@ function renderSignals(entries) {
 
 function renderIteration(entries) {
   const buckets = buildIterationBuckets(entries);
-  renderList(dom.keepList, buckets.keep);
-  renderList(dom.stopList, buckets.stop);
-  renderList(dom.tryList, buckets.try);
+  renderIterationReviewList(dom.keepList, "keep", buckets.keep);
+  renderIterationReviewList(dom.stopList, "adjust", buckets.adjust);
+  renderIterationReviewList(dom.tryList, "try", buckets.try);
 }
 
-function renderList(node, items) {
+function renderIterationReviewList(node, kind, generatedItems) {
   node.innerHTML = "";
-  if (!items.length) {
+  const activeItems = getActiveIterationItems().filter((item) => item.kind === kind);
+  const generatedOnly = generatedItems.filter((text) => !activeItems.some((item) => item.text === text));
+
+  if (!activeItems.length && !generatedOnly.length) {
     node.innerHTML = "<li>继续记录后这里会自动汇总。</li>";
     return;
   }
-  items.slice(0, 5).forEach((item) => {
+
+  activeItems.forEach((item) => {
+    const li = document.createElement("li");
+    li.className = "iteration-review-item";
+    li.innerHTML = `
+      <span>${escapeHtml(item.text)}</span>
+      <div class="iteration-review-actions">
+        <button class="mini-button" data-action="keep" type="button">保留</button>
+        <button class="mini-button" data-action="rewrite" type="button">改写</button>
+        <button class="mini-button" data-action="archive" type="button">归档</button>
+      </div>
+    `;
+    li.querySelector("[data-action='keep']").addEventListener("click", () => keepIterationItem(item.id));
+    li.querySelector("[data-action='rewrite']").addEventListener("click", () => {
+      const next = window.prompt?.("改写这条迭代提醒", item.text);
+      if (next === undefined || next === null) return;
+      rewriteIterationItem(item.id, next);
+    });
+    li.querySelector("[data-action='archive']").addEventListener("click", () => archiveIterationItem(item.id));
+    node.appendChild(li);
+  });
+
+  generatedOnly.slice(0, Math.max(0, 5 - activeItems.length)).forEach((item) => {
     const li = document.createElement("li");
     li.textContent = item;
     node.appendChild(li);
@@ -571,6 +646,120 @@ function renderReminders() {
   });
 }
 
+function renderAnswerLines(textarea, lineActions) {
+  if (!lineActions) return;
+  const lines = getAnswerLines(textarea.value);
+  const visibleLines = lines.length ? lines : [""];
+  lineActions.innerHTML = visibleLines
+    .map((line, index) => {
+      const text = line.trim();
+      return `
+        <div class="line-action-row">
+          <span>${index + 1}.</span>
+          <button class="iteration-line-button" data-line-index="${index}" type="button" ${text ? "" : "disabled"} aria-label="将第 ${index + 1} 条贴到左侧">贴左侧</button>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function createIterationFromLine(promptIndex, text) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
+  const sourceEntryId = `${activeType}-${selectedDate}`;
+  const template = state.templates[activeType] ?? defaultTemplates[activeType];
+  const promptTitle = template[promptIndex]?.title ?? "";
+  const existing = state.iterationItems.some(
+    (item) => item.status === "active" && item.sourceEntryId === sourceEntryId && item.promptTitle === promptTitle && item.text === trimmed,
+  );
+  if (existing) {
+    showToast("这条迭代提醒已经贴在左侧。");
+    return;
+  }
+
+  state.iterationItems.push({
+    id: `iteration-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    text: trimmed,
+    kind: inferIterationKind(promptTitle, trimmed),
+    status: "active",
+    sourceEntryId,
+    sourceType: activeType,
+    sourceDate: selectedDate,
+    promptTitle,
+    createdAt: new Date().toISOString(),
+    archivedAt: null,
+  });
+  persist();
+  renderIterationPanel();
+  renderReview();
+  showToast("已贴到左侧迭代板。");
+}
+
+function renderIterationPanel() {
+  const items = getActiveIterationItems();
+  dom.iterationCount.textContent = String(items.length);
+  dom.iterationList.innerHTML = "";
+
+  if (!items.length) {
+    dom.iterationList.innerHTML = `<div class="empty-state iteration-empty">${emptyIterationMessage}</div>`;
+    return;
+  }
+
+  items.forEach((iterationItem) => {
+    const card = document.createElement("article");
+    card.className = `iteration-card ${iterationItem.kind}`;
+    card.innerHTML = `
+      <div class="iteration-card-head">
+        <span class="iteration-kind ${iterationItem.kind}">${iterationKindLabels[iterationItem.kind] ?? "迭代"}</span>
+        <small>${iterationKindDescriptions[iterationItem.kind] ?? "当前提醒"}</small>
+      </div>
+      <p>${escapeHtml(iterationItem.text)}</p>
+      <div class="iteration-meta">
+        <span>${typeLabels[iterationItem.sourceType] ?? "记录"} ${formatDate(iterationItem.sourceDate)}</span>
+        <span>${escapeHtml(iterationItem.promptTitle || "自由记录")}</span>
+      </div>
+      <button class="mini-button iteration-archive" type="button">归档</button>
+    `;
+
+    card.querySelector(".iteration-archive").addEventListener("click", () => archiveIterationItem(iterationItem.id));
+    dom.iterationList.appendChild(card);
+  });
+}
+
+function archiveIterationItem(id) {
+  const item = state.iterationItems.find((entry) => entry.id === id);
+  if (!item) return;
+  item.status = "archived";
+  item.archivedAt = new Date().toISOString();
+  persist();
+  renderIterationPanel();
+  renderReview();
+  showToast("已归档这条迭代提醒。");
+}
+
+function rewriteIterationItem(id, text) {
+  const item = state.iterationItems.find((entry) => entry.id === id);
+  const next = text.trim();
+  if (!item || !next) return;
+  item.text = next;
+  item.kind = inferIterationKind(item.promptTitle, item.text);
+  persist();
+  renderIterationPanel();
+  renderReview();
+  showToast("已改写这条迭代提醒。");
+}
+
+function keepIterationItem(id) {
+  const item = state.iterationItems.find((entry) => entry.id === id);
+  if (!item) return;
+  item.kind = "keep";
+  persist();
+  renderIterationPanel();
+  renderReview();
+  showToast("已标记为继续坚持。");
+}
+
 function renderDaySelector(type, value) {
   if (type === "daily") {
     return `<select aria-label="日报提醒周期"><option value="everyday">每天</option></select>`;
@@ -595,7 +784,6 @@ function renderDaySelector(type, value) {
 }
 
 function renderStats() {
-  dom.streakCount.textContent = `${calculateStreak()} 天`;
   const next = getNextReminder();
   dom.nextReminder.textContent = next
     ? `下次提醒：${typeLabels[next.type]} ${formatDateTime(next.date.toISOString())}`
@@ -621,15 +809,14 @@ function buildIterationBuckets(entries) {
     return entry.answers.map((answer, index) => ({
       prompt: template[index]?.title ?? "",
       answer,
-      energy: entry.energy,
     }));
   });
 
   const keep = textByPrompt
-    .filter((item) => item.energy >= 7 || /保留|有效|完成|顺利|开心|推进|专注/.test(item.prompt + item.answer))
+    .filter((item) => /保留|有效|完成|顺利|开心|推进|专注|复制|继续/.test(item.prompt + item.answer))
     .map((item) => summarizeAnswer(item.answer));
   const stop = textByPrompt
-    .filter((item) => item.energy <= 4 || /阻力|拖慢|放弃|停止|卡住|消耗/.test(item.prompt + item.answer))
+    .filter((item) => /阻力|拖慢|放弃|停止|卡住|消耗|减少|避免/.test(item.prompt + item.answer))
     .map((item) => summarizeAnswer(item.answer));
   const tryNext = textByPrompt
     .filter((item) => /明天|下周|下个月|尝试|实验|改|迭代/.test(item.prompt + item.answer))
@@ -637,9 +824,31 @@ function buildIterationBuckets(entries) {
 
   return {
     keep: dedupe(keep).filter(Boolean),
-    stop: dedupe(stop).filter(Boolean),
+    adjust: dedupe(stop).filter(Boolean),
     try: dedupe(tryNext).filter(Boolean),
   };
+}
+
+function getActiveIterationItems() {
+  return [...state.iterationItems]
+    .filter((item) => item.status === "active")
+    .sort((a, b) => {
+      const kindCompare = iterationKindOrder.indexOf(a.kind) - iterationKindOrder.indexOf(b.kind);
+      if (kindCompare !== 0) return kindCompare;
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+}
+
+function inferIterationKind(promptTitle, text) {
+  if (/明天|下周|下个月|尝试|实验|迭代|下一步/.test(text)) return "try";
+  if (/阻力|拖慢|放弃|停止|卡住|消耗|减少|避免|不足|改变|调整|改掉/.test(text)) return "adjust";
+  if (/保留|有效|完成|顺利|开心|推进|专注|复制|继续|坚持|做得好/.test(text)) return "keep";
+
+  const source = promptTitle;
+  if (/保留|有效|完成|顺利|开心|推进|专注|复制|继续|坚持|做得好/.test(source)) return "keep";
+  if (/阻力|拖慢|放弃|停止|卡住|消耗|减少|避免|不足|改变|调整|改掉/.test(source)) return "adjust";
+  if (/明天|下周|下个月|尝试|实验|改|迭代|下一步/.test(source)) return "try";
+  return "try";
 }
 
 function scheduleReminders() {
@@ -746,6 +955,7 @@ function loadState() {
       entries: [],
       templates: deepClone(defaultTemplates),
       reminders: deepClone(defaultReminders),
+      iterationItems: [],
     };
   }
 
@@ -755,18 +965,53 @@ function loadState() {
       entries: parsed.entries ?? [],
       templates: { ...deepClone(defaultTemplates), ...(parsed.templates ?? {}) },
       reminders: { ...deepClone(defaultReminders), ...(parsed.reminders ?? {}) },
+      iterationItems: normalizeIterationItems(parsed.iterationItems, parsed.todos),
     };
   } catch {
     return {
       entries: [],
       templates: deepClone(defaultTemplates),
       reminders: deepClone(defaultReminders),
+      iterationItems: [],
     };
   }
 }
 
 function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function normalizeIterationItems(iterationItems = [], todos = []) {
+  const legacyTodos = iterationItems.length ? [] : todos;
+  const migratedTodos = legacyTodos
+    .filter((todo) => !todo.done)
+    .map((todo) => ({
+      id: todo.id?.replace(/^todo-/, "iteration-") ?? `iteration-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text: todo.text ?? "",
+      kind: "try",
+      status: "active",
+      sourceEntryId: todo.sourceEntryId ?? "",
+      sourceType: todo.sourceType ?? "daily",
+      sourceDate: todo.sourceDate ?? toDateInputValue(new Date()),
+      promptTitle: todo.promptTitle ?? "",
+      createdAt: todo.createdAt ?? new Date().toISOString(),
+      archivedAt: null,
+    }));
+
+  return [...iterationItems, ...migratedTodos]
+    .filter((item) => item.text)
+    .map((item) => ({
+      id: item.id ?? `iteration-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text: item.text,
+      kind: iterationKindLabels[item.kind] ? item.kind : "try",
+      status: item.status === "archived" ? "archived" : "active",
+      sourceEntryId: item.sourceEntryId ?? "",
+      sourceType: item.sourceType ?? "daily",
+      sourceDate: item.sourceDate ?? toDateInputValue(new Date()),
+      promptTitle: item.promptTitle ?? "",
+      createdAt: item.createdAt ?? new Date().toISOString(),
+      archivedAt: item.archivedAt ?? null,
+    }));
 }
 
 function findEntry(type, date) {
@@ -813,6 +1058,13 @@ function calculateStreak() {
 
 function getEntryText(entry) {
   return [...entry.answers, entry.freeNote].join(" ");
+}
+
+function getAnswerLines(value) {
+  return String(value)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line, index, lines) => line || lines.length === 1 || index < lines.length - 1);
 }
 
 function getEntryPreview(entry) {
