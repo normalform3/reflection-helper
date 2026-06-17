@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reflection Helper</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell is-sidebar-collapsed" id="appShell">
+      <aside class="sidebar" aria-label="主导航">
+        <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="展开侧边栏" aria-expanded="false">
+          <span></span>
+          <span></span>
+        </button>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <strong>Reflection</strong>
+            <span>写下行为，回到自己</span>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="视图">
+          <button class="nav-item is-active" data-short="记" data-view="write" type="button">记录</button>
+          <button class="nav-item" data-short="回" data-view="review" type="button">回顾</button>
+          <button class="nav-item" data-short="模" data-view="templates" type="button">模板</button>
+          <button class="nav-item" data-short="醒" data-view="settings" type="button">提醒</button>
+        </nav>
+
+        <div class="sidebar-summary">
+          <span>连续日报</span>
+          <strong id="streakCount">0 天</strong>
+          <small id="nextReminder">尚未开启提醒</small>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="view is-visible" id="writeView" aria-label="记录">
+          <div class="write-layout">
+            <section class="editor-area" aria-label="当前记录">
+              <header class="editor-header">
+                <div>
+                  <p class="date-label" id="todayLabel">今天</p>
+                  <h1 id="entryHeading">今天的反思</h1>
+                </div>
+                <div class="header-actions">
+                  <button class="quiet-button" id="contextToggleButton" type="button" aria-controls="contextPanel" aria-expanded="false">日历</button>
+                  <button class="quiet-button" id="newEntryButton" type="button">新建</button>
+                  <button class="quiet-button danger" id="deleteEntryButton" type="button" disabled>删除</button>
+                  <button class="primary-button" id="saveEntryButton" type="button">保存</button>
+                </div>
+              </header>
+
+              <div class="entry-controls">
+                <div class="segmented" role="tablist" aria-label="记录类型">
+                  <button class="segment is-active" data-type="daily" type="button">日报</button>
+                  <button class="segment" data-type="weekly" type="button">周报</button>
+                  <button class="segment" data-type="monthly" type="button">月报</button>
+                </div>
+                <label class="inline-field">
+                  <span>日期</span>
+                  <input id="entryDate" type="date" />
+                </label>
+                <label class="energy-field">
+                  <span>能量 <output id="energyOutput">6</output></span>
+                  <input id="energyLevel" max="10" min="1" type="range" value="6" />
+                </label>
+              </div>
+
+              <form id="entryForm" class="prompt-list"></form>
+
+              <label class="free-note">
+                <span>自由记录</span>
+                <textarea id="freeNote" rows="9" placeholder="写下没被模板覆盖，但你不想漏掉的东西。"></textarea>
+              </label>
+            </section>
+
+            <aside class="context-panel" id="contextPanel" aria-label="日历和当天记录" aria-hidden="true">
+              <div class="drawer-head">
+                <strong>日历</strong>
+                <button class="icon-button" id="closeContextButton" type="button" aria-label="关闭日历">×</button>
+              </div>
+              <section class="calendar-panel" aria-label="日历">
+                <div class="calendar-head">
+                  <button class="icon-button" id="prevMonthButton" type="button" aria-label="上个月">‹</button>
+                  <strong id="calendarTitle">2026 年 6 月</strong>
+                  <button class="icon-button" id="nextMonthButton" type="button" aria-label="下个月">›</button>
+                </div>
+                <div class="calendar-weekdays" aria-hidden="true">
+                  <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+                </div>
+                <div class="calendar-grid" id="calendarGrid"></div>
+                <div class="calendar-legend" aria-label="记录类型图例">
+                  <span><i class="dot daily"></i>日报</span>
+                  <span><i class="dot weekly"></i>周报</span>
+                  <span><i class="dot monthly"></i>月报</span>
+                </div>
+              </section>
+
+              <section class="day-panel" aria-label="选中日期记录">
+                <div class="section-title">
+                  <span id="selectedDayLabel">今天</span>
+                  <button class="text-button" id="jumpTodayButton" type="button">回到今天</button>
+                </div>
+                <div class="day-entry-list" id="dayEntries"></div>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="reviewView" aria-label="回顾">
+          <header class="view-header">
+            <div>
+              <p class="date-label">Review</p>
+              <h1>从记录里看见模式</h1>
+            </div>
+            <div class="review-toolbar">
+              <label>
+                <span>范围</span>
+                <select id="reviewRange">
+                  <option value="7">近 7 天</option>
+                  <option value="30" selected>近 30 天</option>
+                  <option value="90">近 90 天</option>
+                  <option value="365">近 1 年</option>
+                </select>
+              </label>
+              <label>
+                <span>搜索</span>
+                <input id="searchInput" type="search" placeholder="关键词、行为、情绪、项目" />
+              </label>
+            </div>
+          </header>
+
+          <div class="review-layout">
+            <section class="surface">
+              <div class="metrics" id="metrics"></div>
+              <div class="signal-list" id="signals"></div>
+            </section>
+            <section class="surface">
+              <h2>下次迭代</h2>
+              <div class="iteration-columns">
+                <div>
+                  <h3>继续</h3>
+                  <ul id="keepList"></ul>
+                </div>
+                <div>
+                  <h3>停止</h3>
+                  <ul id="stopList"></ul>
+                </div>
+                <div>
+                  <h3>尝试</h3>
+                  <ul id="tryList"></ul>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="templatesView" aria-label="模板">
+          <header class="view-header">
+            <div>
+              <p class="date-label">Templates</p>
+              <h1>让问题变少，让反思更准</h1>
+            </div>
+            <button class="primary-button" id="addPromptButton" type="button">添加问题</button>
+          </header>
+
+          <div class="template-layout">
+            <aside class="template-tabs" aria-label="模板类型">
+              <button class="template-tab is-active" data-template="daily" type="button">日报模板</button>
+              <button class="template-tab" data-template="weekly" type="button">周报模板</button>
+              <button class="template-tab" data-template="monthly" type="button">月报模板</button>
+            </aside>
+            <section class="surface">
+              <h2 id="templateTitle">日报模板</h2>
+              <div id="templatePrompts" class="template-prompts"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="settingsView" aria-label="提醒">
+          <header class="view-header">
+            <div>
+              <p class="date-label">Reminders</p>
+              <h1>给复盘留一个固定入口</h1>
+            </div>
+            <button class="quiet-button" id="permissionButton" type="button">开启通知权限</button>
+          </header>
+
+          <div class="settings-layout">
+            <section class="surface">
+              <div class="reminder-list" id="reminderList"></div>
+            </section>
+            <aside class="surface muted-copy">
+              <h2>数据</h2>
+              <button class="quiet-button" id="exportButton" type="button">导出 JSON</button>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
