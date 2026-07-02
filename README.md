@@ -4,25 +4,35 @@
 
 ## 项目展示
 
+### 1. 主记录页：把反思转成下一步行动
+
 主记录页是用户最高频使用的工作区。页面左侧固定展示“当前迭代”，中间围绕日报、周报、月报展开模板化记录，用户可以把回答里的具体行动直接贴到左侧，避免反思内容写完后沉没在长文本里。
 
-![主记录页](docs/screenshots/01-main-board.png)
+<img src="docs/screenshots/01-main-board.png" alt="主记录页" width="720">
+
+### 2. 日历抽屉：按日期回看复盘材料
 
 日历抽屉用于回看历史记录。用户可以按月份浏览不同日期的记录分布，并通过日报、周报、月报标记快速判断某一天有哪些复盘材料，减少在长列表中翻找历史记录的成本。
 
-![日历抽屉](docs/screenshots/02-calendar-drawer.png)
+<img src="docs/screenshots/02-calendar-drawer.png" alt="日历抽屉" width="720">
+
+### 3. 回顾面板：从记录中提取可观察信号
 
 回顾面板把记录重新整理成可观察的信号。它会基于本地数据统计记录数、记录天数、文字量、周月复盘数量、连续天数和重复词，并把当前迭代项放回“继续 / 调整 / 尝试”的结构中，帮助用户从材料中发现行为模式。
 
-![回顾面板](docs/screenshots/03-review-insights.png)
+<img src="docs/screenshots/03-review-insights.png" alt="回顾面板" width="720">
+
+### 4. 模板设置：让复盘问题适应当前阶段
 
 模板设置支持用户分别维护日报、周报和月报问题。项目没有把复盘问题写死在代码里，而是允许用户根据当前阶段调整问题和提示，让工具适应个人目标变化。
 
-![模板设置](docs/screenshots/04-template-settings.png)
+<img src="docs/screenshots/04-template-settings.png" alt="模板设置" width="720">
+
+### 5. 提醒设置：用本地通知维持复盘节奏
 
 提醒设置用于维持复盘节奏。用户可以分别配置日报、周报、月报提醒时间；在 macOS 应用中，这些配置会同步到系统本地通知，不依赖页面一直打开。
 
-![提醒设置](docs/screenshots/05-reminder-settings.png)
+<img src="docs/screenshots/05-reminder-settings.png" alt="提醒设置" width="720">
 
 ## 项目背景
 
