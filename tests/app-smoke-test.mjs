@@ -234,6 +234,7 @@ function createDom() {
 }
 
 const storage = new Map();
+const nativeWrites = [];
 const fakeDocument = createDom();
 const context = {
   console,
@@ -257,7 +258,15 @@ const context = {
     clearTimeout: () => {},
     setTimeout: () => 0,
     prompt: (_message, value) => `${value} rewritten`,
-    webkit: undefined,
+    __REFLECTION_HELPER_NATIVE_STORAGE__: true,
+    __REFLECTION_HELPER_NATIVE_STATE__: null,
+    webkit: {
+      messageHandlers: {
+        reflectionStorage: {
+          postMessage: (value) => nativeWrites.push(value),
+        },
+      },
+    },
   },
 };
 context.window.window = context.window;
@@ -286,7 +295,7 @@ for (const type of ["daily", "weekly", "monthly"]) {
   context.saveCurrentEntry();
 }
 
-let saved = JSON.parse(storage.get("reflection-helper-state-v1"));
+let saved = JSON.parse(nativeWrites[nativeWrites.length - 1]);
 assert.deepEqual(saved.iterationItems, []);
 assert.deepEqual(
   saved.entries.filter((entry) => entry.date === "2026-06-15").map((entry) => entry.type).sort(),
@@ -297,7 +306,7 @@ assert.equal(saved.entries.find((entry) => entry.id === "daily-2026-06-15").answ
 context.setEntryType("daily");
 context.createIterationFromLine(0, "daily next 0");
 context.createIterationFromLine(0, "daily next 0");
-saved = JSON.parse(storage.get("reflection-helper-state-v1"));
+saved = JSON.parse(nativeWrites[nativeWrites.length - 1]);
 assert.equal(saved.iterationItems.length, 1);
 assert.equal(saved.iterationItems[0].text, "daily next 0");
 assert.equal(saved.iterationItems[0].sourceEntryId, "daily-2026-06-15");
@@ -306,12 +315,12 @@ assert.equal(saved.iterationItems[0].status, "active");
 assert.equal(fakeDocument.ids.get("iterationCount").textContent, "1");
 
 context.rewriteIterationItem(saved.iterationItems[0].id, "明天尝试早 10 分钟开始");
-saved = JSON.parse(storage.get("reflection-helper-state-v1"));
+saved = JSON.parse(nativeWrites[nativeWrites.length - 1]);
 assert.equal(saved.iterationItems[0].text, "明天尝试早 10 分钟开始");
 assert.equal(saved.iterationItems[0].kind, "try");
 
 context.archiveIterationItem(saved.iterationItems[0].id);
-saved = JSON.parse(storage.get("reflection-helper-state-v1"));
+saved = JSON.parse(nativeWrites[nativeWrites.length - 1]);
 assert.equal(saved.iterationItems[0].status, "archived");
 assert.ok(saved.iterationItems[0].archivedAt);
 assert.equal(fakeDocument.ids.get("iterationCount").textContent, "0");
@@ -330,13 +339,11 @@ context.setEntryType("daily");
 context.deleteCurrentEntry();
 assert.equal(fakeDocument.ids.get("deleteEntryButton").textContent, "确认删除");
 context.deleteCurrentEntry();
-saved = JSON.parse(storage.get("reflection-helper-state-v1"));
+saved = JSON.parse(nativeWrites[nativeWrites.length - 1]);
 assert.deepEqual(
   saved.entries.filter((entry) => entry.date === "2026-06-15").map((entry) => entry.type).sort(),
   ["monthly", "weekly"],
 );
-
-console.log("app smoke test passed");
 
 const legacyStorage = new Map([
   [
@@ -371,6 +378,7 @@ const legacyStorage = new Map([
   ],
 ]);
 const legacyDocument = createDom();
+const legacyNativeWrites = [];
 const legacyContext = {
   ...context,
   document: legacyDocument,
@@ -379,13 +387,48 @@ const legacyContext = {
     setItem: (key, value) => legacyStorage.set(key, value),
   },
 };
-legacyContext.window = { ...context.window };
+legacyContext.window = {
+  ...context.window,
+  __REFLECTION_HELPER_NATIVE_STORAGE__: true,
+  __REFLECTION_HELPER_NATIVE_STATE__: null,
+  webkit: {
+    messageHandlers: {
+      reflectionStorage: {
+        postMessage: (value) => legacyNativeWrites.push(value),
+      },
+    },
+  },
+};
 legacyContext.window.window = legacyContext.window;
 vm.createContext(legacyContext);
 vm.runInContext(fs.readFileSync("app.js", "utf8"), legacyContext);
-legacyContext.persist();
-const migrated = JSON.parse(legacyStorage.get("reflection-helper-state-v1")).iterationItems;
+const migrated = JSON.parse(legacyNativeWrites[legacyNativeWrites.length - 1]).iterationItems;
 assert.equal(migrated.length, 1);
 assert.equal(migrated[0].text, "legacy open");
 assert.equal(migrated[0].kind, "try");
 assert.equal(migrated[0].status, "active");
+
+const previewStorage = new Map();
+const previewDocument = createDom();
+const previewContext = {
+  ...context,
+  document: previewDocument,
+  localStorage: {
+    getItem: (key) => previewStorage.get(key) ?? null,
+    setItem: (key, value) => previewStorage.set(key, value),
+  },
+};
+previewContext.window = {
+  ...context.window,
+  __REFLECTION_HELPER_NATIVE_STORAGE__: false,
+  __REFLECTION_HELPER_NATIVE_STATE__: null,
+  webkit: undefined,
+};
+previewContext.window.window = previewContext.window;
+vm.createContext(previewContext);
+vm.runInContext(fs.readFileSync("app.js", "utf8"), previewContext);
+previewContext.selectDate("2026-06-16");
+previewContext.saveCurrentEntry();
+assert.equal(previewStorage.get("reflection-helper-state-v1"), undefined);
+
+console.log("app smoke test passed");

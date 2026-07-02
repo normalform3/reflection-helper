@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     configuration.websiteDataStore = .default()
     configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
     configuration.userContentController.add(self, name: "reflectionReminders")
+    configuration.userContentController.add(self, name: "reflectionStorage")
+    configuration.userContentController.addUserScript(NativeStorage.bootstrapScript())
 
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = self
@@ -45,11 +47,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
   }
 
   func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-    guard message.name == "reflectionReminders",
-      let reminders = message.body as? [String: [String: Any]]
-    else { return }
-
-    ReminderScheduler.sync(reminders: reminders)
+    switch message.name {
+    case "reflectionReminders":
+      guard let reminders = message.body as? [String: [String: Any]] else { return }
+      ReminderScheduler.sync(reminders: reminders)
+    case "reflectionStorage":
+      guard let json = message.body as? String else { return }
+      do {
+        try NativeStorage.save(json: json)
+      } catch {
+        notifyStorageFailure(error)
+      }
+    default:
+      return
+    }
   }
 
   private func loadWebApp() {
@@ -66,6 +77,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
+  }
+
+  private func notifyStorageFailure(_ error: Error) {
+    guard let webView else { return }
+    let message = NativeStorage.javascriptLiteral("本地文件保存失败：\(error.localizedDescription)")
+    let script = """
+    window.dispatchEvent(new CustomEvent("reflection-storage-error", { detail: { message: \(message) } }));
+    """
+    DispatchQueue.main.async {
+      webView.evaluateJavaScript(script)
+    }
+  }
+}
+
+enum NativeStorage {
+  private static let appFolderName = "Reflection Helper"
+  private static let fileName = "state.json"
+
+  static func bootstrapScript() -> WKUserScript {
+    let state = readStateJSON() ?? "null"
+    let source = """
+    window.__REFLECTION_HELPER_NATIVE_STORAGE__ = true;
+    window.__REFLECTION_HELPER_NATIVE_STATE__ = \(state);
+    """
+    return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+  }
+
+  static func save(json: String) throws {
+    guard let data = json.data(using: .utf8) else {
+      throw NativeStorageError.invalidEncoding
+    }
+
+    _ = try JSONSerialization.jsonObject(with: data)
+    let directory = try storageDirectory()
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try data.write(to: directory.appendingPathComponent(fileName), options: [.atomic])
+  }
+
+  static func javascriptLiteral(_ value: String) -> String {
+    guard
+      let data = try? JSONSerialization.data(withJSONObject: value),
+      let literal = String(data: data, encoding: .utf8)
+    else {
+      return "\"\""
+    }
+    return literal
+  }
+
+  private static func readStateJSON() -> String? {
+    guard
+      let data = try? Data(contentsOf: storageFileURL()),
+      (try? JSONSerialization.jsonObject(with: data)) != nil
+    else {
+      return nil
+    }
+    return String(data: data, encoding: .utf8)
+  }
+
+  private static func storageFileURL() -> URL {
+    (try? storageDirectory().appendingPathComponent(fileName))
+      ?? URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent("Library/Application Support")
+        .appendingPathComponent(appFolderName)
+        .appendingPathComponent(fileName)
+  }
+
+  private static func storageDirectory() throws -> URL {
+    guard let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+      throw NativeStorageError.missingApplicationSupport
+    }
+    return applicationSupport.appendingPathComponent(appFolderName, isDirectory: true)
+  }
+}
+
+enum NativeStorageError: LocalizedError {
+  case missingApplicationSupport
+  case invalidEncoding
+
+  var errorDescription: String? {
+    switch self {
+    case .missingApplicationSupport:
+      return "无法定位 Application Support 目录"
+    case .invalidEncoding:
+      return "状态数据不是有效的 UTF-8 文本"
+    }
   }
 }
 

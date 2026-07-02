@@ -47,6 +47,7 @@ const defaultReminders = {
 };
 
 const emptyIterationMessage = "把需要反复提醒自己的改变贴到这里。";
+let shouldPersistLoadedState = false;
 const state = loadState();
 let activeType = "daily";
 let activeTemplateType = "daily";
@@ -108,9 +109,14 @@ init();
 function init() {
   dom.todayLabel.textContent = new Intl.DateTimeFormat("zh-CN", { dateStyle: "full" }).format(new Date());
   dom.entryDate.value = selectedDate;
+  bindStorageEvents();
   bindEvents();
   renderAll();
   scheduleReminders();
+  if (shouldPersistLoadedState) persist();
+  if (!isNativeStorageAvailable()) {
+    showToast("当前是浏览器预览模式，数据不会保存。请构建 macOS 应用正式使用。");
+  }
 }
 
 function bindEvents() {
@@ -161,6 +167,13 @@ function bindEvents() {
 
   dom.permissionButton.addEventListener("click", requestNotificationPermission);
   dom.exportButton.addEventListener("click", exportData);
+}
+
+function bindStorageEvents() {
+  if (typeof window.addEventListener !== "function") return;
+  window.addEventListener("reflection-storage-error", (event) => {
+    showToast(event.detail?.message ?? "本地文件保存失败。");
+  });
 }
 
 function renderAll() {
@@ -949,36 +962,56 @@ function exportData() {
 }
 
 function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (!saved) {
-    return {
-      entries: [],
-      templates: deepClone(defaultTemplates),
-      reminders: deepClone(defaultReminders),
-      iterationItems: [],
-    };
+  const nativeState = isNativeStorageAvailable() ? window.__REFLECTION_HELPER_NATIVE_STATE__ : null;
+  if (nativeState) return normalizeState(nativeState);
+
+  if (isNativeStorageAvailable()) {
+    const legacyState = readLegacyLocalStorageState();
+    if (legacyState) {
+      shouldPersistLoadedState = true;
+      return legacyState;
+    }
   }
 
-  try {
-    const parsed = JSON.parse(saved);
-    return {
-      entries: parsed.entries ?? [],
-      templates: { ...deepClone(defaultTemplates), ...(parsed.templates ?? {}) },
-      reminders: { ...deepClone(defaultReminders), ...(parsed.reminders ?? {}) },
-      iterationItems: normalizeIterationItems(parsed.iterationItems, parsed.todos),
-    };
-  } catch {
-    return {
-      entries: [],
-      templates: deepClone(defaultTemplates),
-      reminders: deepClone(defaultReminders),
-      iterationItems: [],
-    };
-  }
+  return createEmptyState();
 }
 
 function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const bridge = window.webkit?.messageHandlers?.reflectionStorage;
+  if (!isNativeStorageAvailable() || !bridge) return;
+  bridge.postMessage(JSON.stringify(state));
+}
+
+function isNativeStorageAvailable() {
+  return Boolean(window.__REFLECTION_HELPER_NATIVE_STORAGE__ && window.webkit?.messageHandlers?.reflectionStorage);
+}
+
+function readLegacyLocalStorageState() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? normalizeState(JSON.parse(saved)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeState(parsed) {
+  if (!parsed || typeof parsed !== "object") return createEmptyState();
+  return {
+    entries: parsed.entries ?? [],
+    templates: { ...deepClone(defaultTemplates), ...(parsed.templates ?? {}) },
+    reminders: { ...deepClone(defaultReminders), ...(parsed.reminders ?? {}) },
+    iterationItems: normalizeIterationItems(parsed.iterationItems, parsed.todos),
+  };
+}
+
+function createEmptyState() {
+  return {
+    entries: [],
+    templates: deepClone(defaultTemplates),
+    reminders: deepClone(defaultReminders),
+    iterationItems: [],
+  };
 }
 
 function normalizeIterationItems(iterationItems = [], todos = []) {
